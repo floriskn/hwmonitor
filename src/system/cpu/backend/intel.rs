@@ -12,11 +12,8 @@ pub struct IntelBackend {
 }
 
 impl CpuBackend for IntelBackend {
-    fn read_package_temp(&self, package_id: u32) -> Result<f32, String> {
-        let (eax, _) = self.driver.rdmsr_tx(
-            IA32_PACKAGE_THERM_STATUS,
-            GroupAffinity { group: 0, mask: 0 },
-        )?;
+    fn read_package_temp(&self, affinity: &GroupAffinity) -> Result<f32, String> {
+        let (eax, _) = self.driver.rdmsr_tx(IA32_PACKAGE_THERM_STATUS, affinity)?;
 
         if (eax & 0x80000000) != 0 {
             let delta_t = ((eax & 0x007F0000) >> 16) as f32;

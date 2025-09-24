@@ -446,7 +446,7 @@ impl KernelDriver {
     }
 
     /// Read MSR with a temporary affinity
-    pub fn rdmsr_tx(&self, index: u32, affinity: GroupAffinity) -> Result<(u32, u32), String> {
+    pub fn rdmsr_tx(&self, index: u32, affinity: &GroupAffinity) -> Result<(u32, u32), String> {
         with_affinity(affinity, || self.rdmsr(index))
     }
 }

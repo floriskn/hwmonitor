@@ -59,6 +59,10 @@ impl SystemBuilder {
             .set_device_id("WinRing0_1_2_0")
             .set_driver_bin(driver_bin.to_vec())
             .build()?;
+        // driver.close()?;
+        // driver.uninstall()?;
+
+        // return Err("t".into());
 
         // Install
         driver.install()?;

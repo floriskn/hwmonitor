@@ -1,9 +1,9 @@
 use std::{sync::Arc, thread};
 
-use core_affinity;
 use raw_cpuid::{CpuId, CpuIdReader, ExtendedTopologyLevel, TopologyType};
 
 use crate::system::{
+    affinity::{get_all_group_affinities, run_on_all_affinities, GroupAffinity},
     cpu::backend::{amd::AmdBackend, intel::IntelBackend, unknown::UnknownBackend, CpuBackend},
     kernal_driver::KernelDriver,
 };
@@ -17,13 +17,22 @@ pub enum Vendor {
 
 pub struct Thread {
     pub thread_id: u32,
+    pub affinity: GroupAffinity,
     backend: Arc<dyn CpuBackend + Send + Sync>,
+}
+
+impl std::fmt::Debug for Thread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Thread")
+            .field("thread_id", &self.thread_id)
+            .field("affinity", &self.affinity)
+            .finish()
+    }
 }
 
 pub struct Core {
     backend: Arc<dyn CpuBackend + Send + Sync>,
     pub core_id: u32,
-    pub affinity_id: usize,
     pub threads: Vec<Thread>,
 }
 
@@ -33,17 +42,27 @@ impl Core {
     }
 }
 
+impl std::fmt::Debug for Core {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Core")
+            .field("core_id", &self.core_id)
+            .field("threads", &self.threads)
+            .finish()
+    }
+}
+
 pub struct Cpu {
     backend: Arc<dyn CpuBackend + Send + Sync>,
     pub package_id: u32,
     pub vendor: Vendor,
     pub model: String,
     pub cores: Vec<Core>,
+    affinity: GroupAffinity,
 }
 
 impl Cpu {
     pub fn package_temp(&self) -> Result<f32, String> {
-        self.backend.read_package_temp(self.package_id)
+        self.backend.read_package_temp(&self.affinity)
     }
 
     pub fn cores(&self) -> &[Core] {
@@ -57,7 +76,8 @@ impl std::fmt::Debug for Cpu {
             .field("package_id", &self.package_id)
             .field("vendor", &self.vendor)
             .field("model", &self.model)
-            // .field("cores", &self.cores)
+            .field("cores", &self.cores)
+            .field("affinity", &self.affinity)
             .finish()
     }
 }
@@ -75,36 +95,41 @@ fn cpuid_bits_needed(count: u8) -> u8 {
 }
 
 pub fn gather_cpus(driver: &Arc<KernelDriver>) -> Result<Vec<Cpu>, String> {
-    let core_ids = core_affinity::get_core_ids().unwrap();
+    let affinities = get_all_group_affinities()?;
+    // println!("{:#?}", affinities);
     let mut cpus: Vec<Cpu> = Vec::new();
 
-    for core in core_ids {
-        let core_clone = core.clone();
+    // Run detection on all cores in parallel
+    let results = run_on_all_affinities(affinities, |affinity| detect_cpu(affinity))?;
 
-        let info = thread::spawn(move || detect_cpu(core_clone))
-            .join()
-            .map_err(|_| "Thread panicked while detecting CPU".to_string())??;
-
-        insert_cpu_info(&mut cpus, core.id, info, driver);
+    for (affinity, info) in results {
+        insert_cpu_info(&mut cpus, affinity, info?, driver);
     }
+
+    // println!("{:#?}", cpus);
 
     Ok(cpus)
 }
 
-// Detect CPU topology and info for a single core
-fn detect_cpu(core: core_affinity::CoreId) -> Result<(u32, u32, u32, Vendor, String), String> {
-    core_affinity::set_for_current(core);
-
+// Detect CPU topology and info for a single logical core
+fn detect_cpu(
+    aff: GroupAffinity,
+) -> (
+    GroupAffinity,
+    Result<(u32, u32, u32, Vendor, String), String>,
+) {
     let cpuid = CpuId::new();
 
     let vendor = get_vendor(&cpuid);
     let model = get_model(&cpuid);
 
-    if let Some(topoiter) = cpuid.get_extended_topology_info() {
+    let res = if let Some(topoiter) = cpuid.get_extended_topology_info() {
         get_topology_info(topoiter, vendor, &model)
     } else {
         get_legacy_info(&cpuid, vendor, &model)
-    }
+    };
+
+    (aff, res)
 }
 
 // Extract vendor from CPUID
@@ -230,18 +255,24 @@ fn get_legacy_info<R: CpuIdReader>(
 // Insert CPU info into the main vector
 fn insert_cpu_info(
     cpus: &mut Vec<Cpu>,
-    affinity_id: usize,
+    affinity: GroupAffinity,
     info: (u32, u32, u32, Vendor, String),
     driver: &Arc<KernelDriver>,
 ) {
     let (pkg_id, core_id, smt_id, vendor, model) = info;
 
     if let Some(cpu) = cpus.iter_mut().find(|c| c.package_id == pkg_id) {
+        // update cpu.affinity if this one is "lower"
+        if is_lower_affinity(&affinity, &cpu.affinity) {
+            cpu.affinity = affinity.clone();
+        }
+
         // find an existing Core inside the CPU
         if let Some(core_entry) = cpu.cores.iter_mut().find(|c| c.core_id == core_id) {
             // add a new Thread to an existing Core
             core_entry.threads.push(Thread {
                 backend: cpu.backend.clone(),
+                affinity,
                 thread_id: smt_id,
             });
         } else {
@@ -249,14 +280,15 @@ fn insert_cpu_info(
             cpu.cores.push(Core {
                 backend: cpu.backend.clone(),
                 core_id,
-                affinity_id,
                 threads: vec![Thread {
                     backend: cpu.backend.clone(),
+                    affinity,
                     thread_id: smt_id,
                 }],
             });
         }
     } else {
+        // create a new Cpu for this package
         let backend: Arc<dyn CpuBackend + Send + Sync> = match vendor {
             Vendor::Intel => Arc::new(IntelBackend::new(driver.clone())),
             Vendor::Amd => Arc::new(AmdBackend::new(driver.clone())),
@@ -268,15 +300,21 @@ fn insert_cpu_info(
             package_id: pkg_id,
             vendor,
             model,
+            affinity: affinity.clone(), // first affinity seen
             cores: vec![Core {
                 backend: backend.clone(),
                 core_id,
-                affinity_id,
                 threads: vec![Thread {
                     backend: backend.clone(),
+                    affinity,
                     thread_id: smt_id,
                 }],
             }],
         });
     }
+}
+
+/// Decide if `a` is "lower" than `b` by group first, then by mask
+fn is_lower_affinity(a: &GroupAffinity, b: &GroupAffinity) -> bool {
+    (a.group < b.group) || (a.group == b.group && a.mask < b.mask)
 }

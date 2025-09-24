@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::system::{cpu::backend::CpuBackend, kernal_driver::KernelDriver};
+use crate::system::{
+    affinity::GroupAffinity, cpu::backend::CpuBackend, kernal_driver::KernelDriver,
+};
 
 #[derive(Debug)]
 pub struct UnknownBackend {
@@ -8,7 +10,7 @@ pub struct UnknownBackend {
 }
 
 impl CpuBackend for UnknownBackend {
-    fn read_package_temp(&self, package_id: u32) -> Result<f32, String> {
+    fn read_package_temp(&self, affinity: &GroupAffinity) -> Result<f32, String> {
         Err("Not implmented".into())
     }
 
