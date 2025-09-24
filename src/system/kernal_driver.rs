@@ -23,8 +23,8 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-use crate::system::affinity::with_affinity;
-use crate::system::affinity::GroupAffinity;
+use crate::system::cpu::group_affinity::with_affinity;
+use crate::system::cpu::group_affinity::GroupAffinity;
 use crate::system::ioctl::IOCTL;
 
 /// IO Method
