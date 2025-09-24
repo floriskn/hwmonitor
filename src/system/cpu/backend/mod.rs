@@ -1,4 +1,4 @@
-use crate::system::affinity::GroupAffinity;
+use crate::system::cpu::group_affinity::GroupAffinity;
 
 pub mod amd;
 pub mod intel;

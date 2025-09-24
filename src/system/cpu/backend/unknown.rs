@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::system::{
-    affinity::GroupAffinity, cpu::backend::CpuBackend, kernal_driver::KernelDriver,
+    cpu::{backend::CpuBackend, group_affinity::GroupAffinity},
+    kernal_driver::KernelDriver,
 };
 
 #[derive(Debug)]

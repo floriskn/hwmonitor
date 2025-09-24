@@ -3,7 +3,8 @@ use std::sync::Arc;
 use x86::msr::IA32_PACKAGE_THERM_STATUS;
 
 use crate::system::{
-    affinity::GroupAffinity, cpu::backend::CpuBackend, kernal_driver::KernelDriver,
+    cpu::{backend::CpuBackend, group_affinity::GroupAffinity},
+    kernal_driver::KernelDriver,
 };
 
 #[derive(Debug)]
