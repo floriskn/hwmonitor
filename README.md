@@ -1,4 +1,4 @@
-# Rust System & CPU Monitoring Library
+# Rust Monitoring Library
 
 ## Status
 
