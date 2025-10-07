@@ -5,7 +5,13 @@ use raw_cpuid::{CpuId, CpuIdReader};
 use crate::system::{
     cpu::{
         backend::{amd::AmdBackend, intel::IntelBackend, unknown::UnknownBackend, CpuBackend},
-        core::Core,
+        core::{
+            backend::{
+                amd::AmdCoreBackend, intel::IntelCoreBackend, unknown::UnknownCoreBackend,
+                CoreBackend,
+            },
+            core::Core,
+        },
         group_affinity::{get_all_group_affinities, run_on_all_affinities, GroupAffinity},
         thread::Thread,
         topology::{get_legacy_info, get_topology_info},
@@ -100,7 +106,12 @@ fn insert_cpu_info(
             core.threads
                 .push(Thread::new(smt_id, affinity, cpu.backend.clone()));
         } else {
-            let mut core = Core::new(core_id, cpu.backend.clone());
+            let backend: Arc<dyn CoreBackend + Send + Sync> = match vendor {
+                Vendor::Intel => Arc::new(IntelCoreBackend::new(driver.clone(), affinity.clone())),
+                Vendor::Amd => Arc::new(AmdCoreBackend::new(driver.clone())),
+                Vendor::Unknown(_) => Arc::new(UnknownCoreBackend::new(driver.clone())),
+            };
+            let mut core = Core::new(core_id, backend);
             core.threads
                 .push(Thread::new(smt_id, affinity, cpu.backend.clone()));
             cpu.cores.push(core);
@@ -111,8 +122,13 @@ fn insert_cpu_info(
             Vendor::Amd => Arc::new(AmdBackend::new(driver.clone())),
             Vendor::Unknown(_) => Arc::new(UnknownBackend::new(driver.clone())),
         };
+        let core_backend: Arc<dyn CoreBackend + Send + Sync> = match vendor {
+            Vendor::Intel => Arc::new(IntelCoreBackend::new(driver.clone(), affinity.clone())),
+            Vendor::Amd => Arc::new(AmdCoreBackend::new(driver.clone())),
+            Vendor::Unknown(_) => Arc::new(UnknownCoreBackend::new(driver.clone())),
+        };
 
-        let mut core = Core::new(core_id, backend.clone());
+        let mut core = Core::new(core_id, core_backend);
         core.threads
             .push(Thread::new(smt_id, affinity.clone(), backend.clone()));
 
