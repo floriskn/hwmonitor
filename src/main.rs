@@ -20,6 +20,9 @@ fn main() -> Result<(), String> {
             println!("Core {} temp: {:?}", core.core_id, core.temperature());
         }
 
+        let res = cpu.test();
+        println!("{:#?}", res.unwrap().len());
+
         sleep(Duration::from_secs(1));
     }
 

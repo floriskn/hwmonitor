@@ -1,6 +1,12 @@
-use std::sync::Arc;
+use std::{mem::zeroed, sync::Arc};
 
 use raw_cpuid::{CpuId, CpuIdReader};
+use windows::{
+    Wdk::System::SystemInformation::{
+        NtQuerySystemInformation, SystemProcessorPerformanceInformation,
+    },
+    Win32::Foundation::STATUS_SUCCESS,
+};
 
 use crate::system::{
     cpu::{
@@ -20,6 +26,17 @@ use crate::system::{
     kernal_driver::KernelDriver,
 };
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION {
+    idle_time: i64,
+    kernel_time: i64,
+    user_time: i64,
+    dpc_time: i64,
+    interrupt_time: i64,
+    interrupt_count: u32,
+}
+
 pub struct Cpu {
     backend: Arc<dyn CpuBackend + Send + Sync>,
     pub package_id: u32,
@@ -36,6 +53,29 @@ impl Cpu {
 
     pub fn cores(&self) -> &[Core] {
         &self.cores
+    }
+
+    pub fn test(&self) -> Option<Vec<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>> {
+        unsafe {
+            // Reserve for up to 64 CPUs
+            let mut info = [zeroed::<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>(); 64];
+            let mut return_length = 0u32;
+
+            let status = NtQuerySystemInformation(
+                SystemProcessorPerformanceInformation,
+                info.as_mut_ptr() as *mut _,
+                (info.len() * size_of::<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>()) as u32,
+                &mut return_length,
+            );
+
+            if status == STATUS_SUCCESS {
+                let count = (return_length as usize)
+                    / size_of::<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>();
+                Some(info[..count].to_vec())
+            } else {
+                None
+            }
+        }
     }
 }
 
