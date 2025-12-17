@@ -1,109 +1,114 @@
-use std::sync::Arc;
-
-use crate::system::{
-    cpu::cpu::{gather_cpus, Cpu},
-    kernal_driver::{DriverBuilder, KernelDriver},
+use std::{
+    any::{Any, TypeId},
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
+    rc::{Rc, Weak},
+    sync::Arc,
 };
+
+use crate::system::{cpu::cpu::Cpu, sensor::sensor::Sensor};
+
+pub trait Driver: Any + std::fmt::Debug {
+    fn shutdown(&mut self);
+}
+
+pub trait Backend {
+    fn update(&self);
+}
+
+#[derive(Debug, Clone)]
+struct BackendRef(Weak<RefCell<dyn Backend>>);
+
+impl PartialEq for BackendRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
+impl Eq for BackendRef {}
+
+impl Hash for BackendRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.as_ptr().hash(state);
+    }
+}
 
 #[derive(Debug)]
 pub struct System {
-    driver: Arc<KernelDriver>,
-    pub cpu: Option<Vec<Cpu>>,
+    drivers: HashMap<TypeId, Rc<RefCell<dyn Driver>>>,
+    pub sensors: Vec<Sensor>,
+    backends: HashSet<BackendRef>,
 }
 
 impl System {
-    pub fn builder() -> SystemBuilder {
-        SystemBuilder::default()
+    /// Create an empty system
+    pub fn new() -> Self {
+        Self {
+            drivers: HashMap::new(),
+            sensors: Vec::new(),
+            backends: HashSet::new(),
+        }
     }
 
-    // Internal constructor used by builder
-    fn new(driver: Arc<KernelDriver>, cpu: Option<Vec<Cpu>>) -> Self {
-        Self { driver, cpu }
-    }
+    pub fn discover(&mut self) -> Result<(), String> {
+        Cpu::discover(self)?;
 
-    /// Explicit close
-    pub fn close(self) -> Result<(), String> {
-        // Force close/uninstall through RefCell
-        self.driver.close()?;
-        self.driver.uninstall()?;
-
-        println!("uninstalled (forced)");
         Ok(())
     }
-}
 
-// Builder struct
-#[derive(Default)]
-pub struct SystemBuilder {
-    enable_cpu: bool,
-    // future: enable_gpu, enable_ram, etc.
-}
-
-impl SystemBuilder {
-    pub fn cpu(mut self) -> Self {
-        self.enable_cpu = true;
-        self
+    /// Add a sensor to the system
+    pub fn add_sensor(&mut self, sensor: Sensor) {
+        self.sensors.push(sensor);
     }
 
-    pub fn build(self) -> Result<System, String> {
-        // Select the driver binary based on architecture
-        let driver_bin: &[u8] = if cfg!(target_arch = "x86_64") {
-            include_bytes!("../../resources/WinRing0x64.sys")
-        } else {
-            include_bytes!("../../resources/WinRing0.sys")
-        };
+    pub(crate) fn register_backend(&mut self, backend: &Rc<RefCell<dyn Backend>>) {
+        self.backends.insert(BackendRef(Rc::downgrade(backend)));
+    }
 
-        // Create driver
-        let mut driver = DriverBuilder::new()
-            .set_device_description("Hw Monitor Driver")
-            .set_device_id("WinRing0_1_2_0")
-            .set_driver_bin(driver_bin.to_vec())
-            .build()?;
-        // driver.close()?;
-        // driver.uninstall()?;
-
-        // return Err("t".into());
-
-        // Install
-        driver.install()?;
-
-        // Open driver
-        if let Err(e) = driver.open() {
-            let _ = driver.uninstall();
-            return Err(format!("Failed to open driver: {}", e));
-        }
-
-        // Wrap in Rc after successful open
-        let driver_rc = Arc::new(driver);
-
-        // Centralized helper to initialize a subsystem
-        fn init_subsystem<T>(
-            driver: &Arc<KernelDriver>,
-            enabled: bool,
-            f: impl Fn(&Arc<KernelDriver>) -> Result<T, String>,
-        ) -> Result<Option<T>, String> {
-            if enabled {
-                match f(driver) {
-                    Ok(sub) => Ok(Some(sub)),
-                    Err(e) => {
-                        // Cleanup driver on failure
-                        let _ = Arc::get_mut(&mut driver.clone()).map(|d| {
-                            let _ = d.close();
-                            let _ = d.uninstall();
-
-                            println!("Failure cleanup")
-                        });
-                        Err(e)
-                    }
-                }
+    fn update_backends(&mut self) {
+        self.backends.retain(|b| {
+            if let Some(backend) = b.0.upgrade() {
+                backend.borrow().update();
+                true
             } else {
-                Ok(None)
+                false
             }
+        });
+    }
+
+    pub fn insert_driver<D: Driver + 'static>(&mut self, driver: D) -> Rc<RefCell<D>> {
+        println!("DRIVER CREATED");
+        let type_id = std::any::TypeId::of::<D>();
+        let rc = Rc::new(RefCell::new(driver));
+        self.drivers.insert(type_id, rc.clone());
+        rc
+    }
+
+    /// Check if a driver of this type exists
+    pub fn has_driver<D: Driver + 'static>(&self) -> bool {
+        self.drivers.contains_key(&TypeId::of::<D>())
+    }
+
+    /// Get a driver if it exists
+    pub fn get_driver<D: Driver + 'static>(&self) -> Option<Rc<RefCell<D>>> {
+        self.drivers.get(&TypeId::of::<D>()).map(|driver_rc| {
+            // Safe to clone Rc
+            let driver_rc = Rc::clone(driver_rc);
+
+            // Convert Rc<RefCell<dyn Driver>> -> Rc<RefCell<D>>
+            // Use dynamic borrow downcast
+            let raw: *const RefCell<dyn Driver> = Rc::as_ptr(&driver_rc);
+            let typed_rc: Rc<RefCell<D>> = unsafe { Rc::from_raw(raw as *const RefCell<D>) };
+            std::mem::forget(driver_rc); // prevent double free
+            typed_rc
+        })
+    }
+
+    /// Close all drivers
+    pub fn close(&self) {
+        for driver in self.drivers.values() {
+            driver.borrow_mut().shutdown();
         }
-
-        // Initialize subsystems
-        let cpu = init_subsystem(&driver_rc, self.enable_cpu, |drv| gather_cpus(drv))?;
-
-        Ok(System::new(driver_rc, cpu))
     }
 }

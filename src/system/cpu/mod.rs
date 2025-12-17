@@ -1,9 +1,7 @@
-mod backend;
-mod core;
 pub mod cpu;
-pub mod group_affinity;
-mod thread;
-mod topology;
 mod vendor;
 
-// pub use cpu::;
+pub mod core;
+pub mod group_affinity;
+pub mod thread;
+pub mod topology;

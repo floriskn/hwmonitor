@@ -1,4 +1,3 @@
-mod cpu;
-mod ioctl;
-mod kernal_driver;
+pub mod cpu;
+pub mod sensor;
 pub mod system;

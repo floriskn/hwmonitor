@@ -6,7 +6,7 @@ use windows::Win32::{
     },
 };
 
-use crate::system::cpu::group_affinity::GroupAffinity;
+use crate::pawn_io::intel_msr::GroupAffinity;
 
 pub fn get_all_group_affinities() -> Result<Vec<GroupAffinity>, String> {
     unsafe {
