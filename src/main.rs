@@ -19,6 +19,7 @@ fn main() -> Result<(), String> {
     let _ = s.discover();
 
     for _ in 0..3 {
+        s.update_backends();
         for sensor in &s.sensors {
             if (sensor.kind() == SensorKind::Utilization) {
                 println!(

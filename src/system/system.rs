@@ -7,7 +7,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::system::{cpu::cpu::Cpu, sensor::sensor::Sensor};
+use crate::system::{
+    cpu::cpu::Cpu,
+    sensor::sensor::{Sensor, SensorKind},
+};
 
 pub trait Driver: Any + std::fmt::Debug {
     fn shutdown(&mut self);
@@ -51,6 +54,32 @@ impl System {
         }
     }
 
+    // 1. Return number of registered backends
+    pub fn count_backends(&self) -> usize {
+        self.backends.len()
+    }
+
+    // 2. Remove all Utilization sensors except one
+    pub fn keep_one_utilization_sensor(&mut self) {
+        let mut keep = false;
+        self.sensors.retain(|s| {
+            if s.kind() == SensorKind::Utilization {
+                if keep {
+                    return false; // remove
+                } else {
+                    keep = true;
+                    return true; // keep the first one
+                }
+            }
+            true // keep all others
+        });
+    }
+
+    // 3. Remove all Utilization sensors
+    pub fn remove_all_utilization_sensors(&mut self) {
+        self.sensors.retain(|s| s.kind() != SensorKind::Utilization);
+    }
+
     pub fn discover(&mut self) -> Result<(), String> {
         Cpu::discover(self)?;
 
@@ -66,7 +95,7 @@ impl System {
         self.backends.insert(BackendRef(Rc::downgrade(backend)));
     }
 
-    fn update_backends(&mut self) {
+    pub fn update_backends(&mut self) {
         self.backends.retain(|b| {
             if let Some(backend) = b.0.upgrade() {
                 backend.borrow().update();
