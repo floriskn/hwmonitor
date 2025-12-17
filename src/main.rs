@@ -1,32 +1,50 @@
-use std::{thread::sleep, time::Duration};
+use std::{thread, time::Duration};
 
-use crate::system::system::System;
+use crate::{
+    pawn_io::intel_msr::{self, GroupAffinity, IntelMsr},
+    system::{
+        cpu::cpu::IntelCpuTempSensor,
+        sensor::sensor::{SensorImpl, SensorKind},
+        system::System,
+    },
+};
 
+mod pawn_io;
 mod system;
 
 fn main() -> Result<(), String> {
-    let system = System::builder().cpu().build()?;
+    let mut s = System::new();
+    // let intel_driver = s.insert_driver(|| IntelMsr::new());
 
-    let binding = system.cpu.as_ref().unwrap();
-    let cpu = binding.get(0).unwrap();
+    let _ = s.discover();
 
-    for _ in 0..10 {
-        match cpu.package_temp() {
-            Ok(value) => println!("Package temp: {}", value),
-            Err(error) => println!("Error reading package temp: {}", error),
+    for _ in 0..3 {
+        for sensor in &s.sensors {
+            if (sensor.kind() == SensorKind::Utilization) {
+                println!(
+                    "{}: {}, target: {:?}, kind: {:?}",
+                    sensor.id,
+                    sensor.read()?,
+                    sensor.target(),
+                    sensor.kind()
+                );
+            }
+            // let _ = sensor.read()?;
         }
 
-        for core in cpu.cores() {
-            println!("Core {} temp: {:?}", core.core_id, core.temperature());
-        }
-
-        let res = cpu.test();
-        println!("{:#?}", res.unwrap().len());
-
-        sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(1));
     }
 
-    system.close()?;
+    // let x = IntelCpuTempSensor {
+    //     driver: IntelMsr::new(),
+    //     affinity: GroupAffinity { mask: 1, group: 0 },
+    // };
+
+    // let t = x.read(&Some(vec![100f32, 1f32]));
+
+    // println!("{:#?}", t);
+
+    s.close();
 
     Ok(())
 }

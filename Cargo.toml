@@ -19,4 +19,5 @@ windows = { version = "0.62.0", features = [
   "Wdk_System_SystemInformation",
 ] }
 windows-service = "0.8.0"
+winreg = "0.55.0"
 x86 = "0.52.0"

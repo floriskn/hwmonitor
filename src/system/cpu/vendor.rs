@@ -11,10 +11,9 @@ pub enum Vendor {
 pub fn get_vendor<R: CpuIdReader>(cpuid: &CpuId<R>) -> Vendor {
     cpuid
         .get_vendor_info()
-        .map(|v| match v.as_str() {
+        .map_or(Vendor::Unknown(None), |v| match v.as_str() {
             "GenuineIntel" => Vendor::Intel,
             "AuthenticAMD" | "HygonGenuine" => Vendor::Amd,
-            name => Vendor::Unknown(Some(name.to_owned())),
+            name => Vendor::Unknown(Some(name.to_string())),
         })
-        .unwrap_or(Vendor::Unknown(None))
 }

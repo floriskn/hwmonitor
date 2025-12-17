@@ -5,43 +5,7 @@ use windows::Win32::System::{
     Threading::{GetCurrentThread, GetThreadGroupAffinity, SetThreadGroupAffinity},
 };
 
-use crate::system::cpu::group_affinity::GroupAffinity;
-
-/// Set thread affinity temporarily, run the closure, restore old affinity
-pub fn with_affinity<F, R>(aff: &GroupAffinity, f: F) -> Result<R, String>
-where
-    F: FnOnce() -> Result<R, String>,
-{
-    unsafe {
-        let thread = GetCurrentThread();
-
-        // Save old affinity
-        let mut prev: GROUP_AFFINITY = std::mem::zeroed();
-        if !GetThreadGroupAffinity(thread, &mut prev).as_bool() {
-            return Err("GetThreadGroupAffinity failed".into());
-        }
-
-        // Set new affinity
-        let new_aff = GROUP_AFFINITY {
-            Mask: aff.mask,
-            Group: aff.group,
-            Reserved: [0; 3],
-        };
-        if !SetThreadGroupAffinity(thread, &new_aff, Some(&mut prev)).as_bool() {
-            return Err("SetThreadGroupAffinity failed".into());
-        }
-
-        // Run the function
-        let result = f();
-
-        // Restore old affinity
-        if !SetThreadGroupAffinity(thread, &prev, None).as_bool() {
-            return Err("SetThreadGroupAffinity failed".into());
-        }
-
-        result
-    }
-}
+use crate::pawn_io::intel_msr::GroupAffinity;
 
 /// Run a closure for each group affinity in parallel,
 /// while preserving the main thread's original affinity.
