@@ -1,4 +1,4 @@
-use std::{cell::RefCell, time::Instant};
+use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use windows::Win32::{
     Foundation::FILETIME,
@@ -7,7 +7,10 @@ use windows::Win32::{
 
 use crate::{
     pawn_io::intel_msr::{with_affinity, GroupAffinity},
-    system::sensor::sensor::{SensorImpl, SensorKind, SensorTarget},
+    system::{
+        cpu::core::CpuLoadBackend,
+        sensor::sensor::{SensorImpl, SensorKind, SensorTarget},
+    },
 };
 
 #[derive(Debug)]
@@ -36,74 +39,39 @@ const MAX_PROC_PER_GROUP: usize = 32;
 pub struct ThreadLoadSensor {
     pub affinity: GroupAffinity,
     prev_state: RefCell<Option<(u64, u64, Instant)>>, // kernel_ns, user_ns, timestamp
+    backend: Rc<RefCell<CpuLoadBackend>>,
     index: usize,
 }
 
 impl ThreadLoadSensor {
-    pub fn new(affinity: GroupAffinity) -> Self {
+    pub fn new(backend: &Rc<RefCell<CpuLoadBackend>>, affinity: GroupAffinity) -> Self {
         let bit_index = affinity.mask.trailing_zeros() as usize;
         let flat_index = affinity.group as usize * MAX_PROC_PER_GROUP + bit_index;
 
-        println!(
-            "Creating ThreadLoadSensor: group={}, mask=0x{:X}, flat_index={}",
-            affinity.group, affinity.mask, flat_index
-        );
+        // println!(
+        //     "Creating ThreadLoadSensor: group={}, mask=0x{:X}, flat_index={}",
+        //     affinity.group, affinity.mask, flat_index
+        // );
 
         Self {
+            backend: backend.clone(),
             affinity,
             prev_state: RefCell::new(None),
             index: flat_index,
         }
     }
 
-    fn read_times(&self) -> Result<(u64, u64), String> {
-        with_affinity(&self.affinity, || {
-            let thread = unsafe { GetCurrentThread() };
-            let mut creation = FILETIME::default();
-            let mut exit = FILETIME::default();
-            let mut kernel = FILETIME::default();
-            let mut user = FILETIME::default();
-
-            let ok =
-                unsafe { GetThreadTimes(thread, &mut creation, &mut exit, &mut kernel, &mut user) }
-                    .is_ok();
-            if !ok {
-                return Err("GetThreadTimes failed".into());
-            }
-
-            let kernel_ns =
-                ((kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64) * 100;
-            let user_ns = ((user.dwHighDateTime as u64) << 32 | user.dwLowDateTime as u64) * 100;
-
-            Ok((kernel_ns, user_ns))
-        })
+    fn read_times(&self) -> Result<f32, String> {
+        match self.backend.borrow().get(self.index) {
+            Some(val) => Ok(val as f32), // convert f64 -> u64
+            None => Err("No value found".to_string()),
+        }
     }
 }
 
 impl SensorImpl for ThreadLoadSensor {
     fn read(&self, _parameters: &Option<Vec<f32>>) -> Result<f32, String> {
-        let (kernel_ns, user_ns) = self.read_times()?;
-        let now = Instant::now();
-        let mut prev = self.prev_state.borrow_mut();
-
-        let load_percent = if let Some((prev_kernel, prev_user, prev_time)) = *prev {
-            let delta_ns = (kernel_ns + user_ns).saturating_sub(prev_kernel + prev_user);
-            let elapsed_ns = now.duration_since(prev_time).as_nanos() as u64;
-            if elapsed_ns == 0 {
-                0.0
-            } else {
-                // CPU load fraction = time spent on CPU / elapsed wall-clock time
-                let frac = (delta_ns as f64) / (elapsed_ns as f64);
-                frac.min(1.0).max(0.0) * 100.0 // clamp 0..100%
-            }
-        } else {
-            0.0 // first read, no previous data
-        };
-
-        // store new state
-        *prev = Some((kernel_ns, user_ns, now));
-
-        Ok(load_percent as f32)
+        self.read_times()
     }
 
     fn kind(&self) -> SensorKind {

@@ -17,14 +17,14 @@ use crate::{
     pawn_io::intel_msr::{GroupAffinity, IntelMsr},
     system::{
         cpu::{
-            core::Core,
+            core::{Core, CpuLoadBackend},
             group_affinity::{system::get_all_group_affinities, thread::run_on_all_affinities},
             thread::{Thread, ThreadLoadSensor},
             topology::{get_legacy_info, get_topology_info},
             vendor::{get_vendor, Vendor},
         },
         sensor::sensor::{Sensor, SensorImpl, SensorKind, SensorTarget},
-        system::System,
+        system::{Backend, System},
     },
 };
 
@@ -303,6 +303,7 @@ impl Cpu {
                 .or_default()
                 .insert(core_id);
         }
+        let backend = Rc::new(RefCell::new(CpuLoadBackend::new(results.len())));
 
         for (affinity, info, features, has_dts) in results {
             let (package_id, core_id, smt_id, vendor, model) = info?;
@@ -319,8 +320,11 @@ impl Cpu {
             if let Some(cpu) = cpus.iter_mut().find(|c| c.package_id == package_id) {
                 if let Some(core) = cpu.cores.iter_mut().find(|c| c.core_id == core_id) {
                     system.add_sensor(Sensor {
-                        id: format!("/cpu/{}/core/{}/thread{}/load", package_id, core_id, smt_id),
-                        impl_: Box::new(ThreadLoadSensor::new(affinity.clone())),
+                        id: format!(
+                            "/cpu/{}/core/{}/thread/{}/load",
+                            package_id, core_id, smt_id
+                        ),
+                        impl_: Box::new(ThreadLoadSensor::new(&backend, affinity.clone())),
                         parameters: None,
                     });
                     core.threads.push(Thread::new(smt_id, affinity));
@@ -346,8 +350,11 @@ impl Cpu {
                     });
 
                     system.add_sensor(Sensor {
-                        id: format!("/cpu/{}/core/{}/thread{}/load", package_id, core_id, smt_id),
-                        impl_: Box::new(ThreadLoadSensor::new(affinity.clone())),
+                        id: format!(
+                            "/cpu/{}/core/{}/thread/{}/load",
+                            package_id, core_id, smt_id
+                        ),
+                        impl_: Box::new(ThreadLoadSensor::new(&backend, affinity.clone())),
                         parameters: None,
                     });
 
@@ -364,8 +371,11 @@ impl Cpu {
                 };
 
                 system.add_sensor(Sensor {
-                    id: format!("/cpu/{}/core/{}/thread{}/load", package_id, core_id, smt_id),
-                    impl_: Box::new(ThreadLoadSensor::new(affinity.clone())),
+                    id: format!(
+                        "/cpu/{}/core/{}/thread/{}/load",
+                        package_id, core_id, smt_id
+                    ),
+                    impl_: Box::new(ThreadLoadSensor::new(&backend, affinity.clone())),
                     parameters: None,
                 });
 
@@ -433,6 +443,7 @@ impl Cpu {
         }
 
         // println!("cpus: {:#?}", cpus);
+        system.register_backend(&(backend as Rc<RefCell<dyn Backend>>));
 
         Ok(cpus)
     }
