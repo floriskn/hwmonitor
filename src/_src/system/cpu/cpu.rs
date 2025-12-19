@@ -10,7 +10,9 @@ use crate::_src::{
         backend::Backend,
         cpu::{
             backends::thread_backend::ThreadBackend,
-            intel::{micro_architecture::MicroArchitecture, utils::get_cpu_tjmax_info},
+            intel::{
+                micro_architecture::MicroArchitecture, tj_max::CpuTJMax, utils::get_cpu_tjmax_info,
+            },
             sensors::{intel::temparature::IntelCpuTempSensor, thread_load::ThreadLoadSensor},
         },
         sensor::Sensor,
@@ -217,7 +219,8 @@ impl Cpu {
         vendor: &Vendor,
     ) {
         let Vendor::Intel {
-            micro_architecture, ..
+            micro_architecture,
+            tj_max,
         } = vendor
         else {
             return;
@@ -231,7 +234,10 @@ impl Cpu {
                 .get_driver::<IntelMsr>()
                 .unwrap_or_else(|| system.insert_driver(IntelMsr::new()));
 
-            let tj_max = get_tj_max_from_msr(&driver, affinity.clone());
+            let tj_max = match tj_max {
+                CpuTJMax::MSR => get_tj_max_from_msr(&driver, affinity.clone()),
+                CpuTJMax::Static(v) => *v,
+            };
 
             let sensor_id = match core_id {
                 Some(id) => format!("/cpu/{}/core/{}/temp", package_id, id),
