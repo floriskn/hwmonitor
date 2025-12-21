@@ -4,7 +4,7 @@ use raw_cpuid::{
     CpuId, CpuIdReader, CpuIdReaderNative, ExtendedTopologyLevel, TopologyType, VendorInfo,
 };
 
-use crate::_src::system::cpu::affinity::{
+use crate::system::cpu::affinity::{
     group::{get_all_group_affinities, GroupAffinity},
     utils::run_on_all_affinities,
 };

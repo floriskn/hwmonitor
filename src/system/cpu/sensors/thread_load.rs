@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use crate::_src::system::{
+use crate::system::{
     cpu::{
         affinity::group::GroupAffinity,
         backends::thread_backend::{ThreadBackend, ThreadBackendError},

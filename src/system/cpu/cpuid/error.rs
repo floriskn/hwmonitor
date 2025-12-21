@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::_src::system::cpu::affinity::error::AffinityError;
+use crate::system::cpu::affinity::error::AffinityError;
 
 #[derive(Debug)]
 pub enum CpuidError {
