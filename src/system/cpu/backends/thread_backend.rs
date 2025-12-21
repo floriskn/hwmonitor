@@ -121,8 +121,9 @@ impl ThreadBackend {
     }
 }
 
+// TODO: SHOULD BE DRIVER
 impl Backend for ThreadBackend {
-    fn update(&self) {
+    fn update(&mut self) {
         // 1. Get new times or bail on error
         let (new_idle, new_total) = unsafe {
             match self.get_times() {

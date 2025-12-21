@@ -16,6 +16,10 @@ fn main() -> Result<(), String> {
     for _ in 0..5 {
         s.update_backends();
         for sensor in &s.sensors {
+            if sensor.kind() != SensorKind::Clock {
+                continue;
+            }
+
             let display_value = match sensor.read() {
                 Ok(Some(val)) => val.to_string(),
                 Ok(None) => "null".to_string(),

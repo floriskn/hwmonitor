@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Weak;
 
 pub trait Backend {
-    fn update(&self);
+    fn update(&mut self);
 }
 
 #[derive(Debug, Clone)]
