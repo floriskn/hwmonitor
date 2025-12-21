@@ -42,6 +42,7 @@ pub enum SensorKind {
     FanSpeed,
     Power,
     Utilization,
+    Clock,
 }
 
 pub trait SensorImpl: std::fmt::Debug {

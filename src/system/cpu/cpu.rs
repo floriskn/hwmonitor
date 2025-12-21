@@ -4,16 +4,28 @@ use std::{
     rc::Rc,
 };
 
+use x86::msr::{IA32_PERF_STATUS, MSR_PLATFORM_INFO};
+
 use crate::{
     drivers::pawn_io::intel_msr::IntelMsr,
     system::{
         backend::Backend,
         cpu::{
-            backends::thread_backend::ThreadBackend,
-            intel::{
-                micro_architecture::MicroArchitecture, tj_max::CpuTJMax, utils::get_cpu_tjmax_info,
+            backends::{
+                thread_backend::ThreadBackend, time_stamp_counter_backend::TimeStampCounterBackend,
             },
-            sensors::{intel::temparature::IntelCpuTempSensor, thread_load::ThreadLoadSensor},
+            intel::{
+                micro_architecture::MicroArchitecture,
+                tj_max::CpuTJMax,
+                utils::{get_cpu_tjmax_info, get_time_stamp_counter_multiplier},
+            },
+            sensors::{
+                intel::{
+                    bus_clock::IntelBusClockSensor, core_clock::IntelCoreClockSensor,
+                    temparature::IntelCpuTempSensor,
+                },
+                thread_load::ThreadLoadSensor,
+            },
         },
         sensor::Sensor,
         system::System,
@@ -72,10 +84,13 @@ impl Cpu {
         }
 
         let cores_per_package = Self::calculate_cores_per_package(&affinities);
+        // TODO: should be same as driver now for 2 cpus this errors
         let backend = Rc::new(RefCell::new(ThreadBackend::new(affinities.len())));
 
         let mut cpus: Vec<Cpu> = Vec::new();
         let mut cpu_indices: HashMap<Option<u32>, usize> = HashMap::new();
+        let mut cpu_tsc_backends: HashMap<usize, Rc<RefCell<TimeStampCounterBackend>>> =
+            HashMap::new();
 
         for info in affinities {
             match info {
@@ -89,6 +104,7 @@ impl Cpu {
                     let cpu_idx = Self::get_or_create_cpu(
                         &mut cpus,
                         &mut cpu_indices,
+                        &mut cpu_tsc_backends,
                         system,
                         &cpuid,
                         Some(package_id),
@@ -98,7 +114,13 @@ impl Cpu {
 
                     let cpu = &mut cpus[cpu_idx];
                     let core = Self::get_or_create_core(
-                        cpu, core_id, package_id, system, &cpuid, &affinity,
+                        cpu,
+                        cpu_tsc_backends.get(&cpu_idx).unwrap(),
+                        core_id,
+                        package_id,
+                        system,
+                        &cpuid,
+                        &affinity,
                     );
 
                     // Add Thread Load Sensor
@@ -117,6 +139,7 @@ impl Cpu {
                     let cpu_idx = Self::get_or_create_cpu(
                         &mut cpus,
                         &mut cpu_indices,
+                        &mut cpu_tsc_backends,
                         system,
                         &cpuid,
                         None,
@@ -137,6 +160,10 @@ impl Cpu {
             }
         }
 
+        for (_, backend) in cpu_tsc_backends {
+            system.register_backend(&(backend as Rc<RefCell<dyn Backend>>));
+        }
+
         system.register_backend(&(backend as Rc<RefCell<dyn Backend>>));
         cpus
     }
@@ -145,6 +172,7 @@ impl Cpu {
     fn get_or_create_cpu(
         cpus: &mut Vec<Cpu>,
         indices: &mut HashMap<Option<u32>, usize>,
+        cpu_tsc_backends: &mut HashMap<usize, Rc<RefCell<TimeStampCounterBackend>>>,
         system: &mut System,
         cpuid: &raw_cpuid::CpuId<impl raw_cpuid::CpuIdReader>,
         package_id: Option<u32>,
@@ -161,14 +189,19 @@ impl Cpu {
                 .copied()
                 .unwrap_or(0);
 
-            let vendor = Self::determine_vendor(cpuid, family, model, stepping, core_count);
+            let vendor = Self::determine_vendor(system, cpuid, family, model, stepping, core_count);
             let brand = cpuid
                 .get_processor_brand_string()
                 .map_or(String::new(), |s| s.as_str().to_string());
 
+            let backend = Rc::new(RefCell::new(TimeStampCounterBackend::new(affinity.clone())));
+
             if let Some(pkg_id) = package_id {
                 Self::try_add_intel_temp_sensor(system, cpuid, pkg_id, None, affinity, &vendor);
+                Self::try_add_intel_bus_clock_sensor(system, cpuid, pkg_id, &vendor, &backend);
             }
+
+            cpu_tsc_backends.insert(cpus.len(), backend);
 
             cpus.push(Cpu::new(
                 package_id,
@@ -186,6 +219,7 @@ impl Cpu {
     /// Helper: Find core in CPU or initialize new one with its core-level sensors
     fn get_or_create_core<'a>(
         cpu: &'a mut Cpu,
+        cpu_backend: &Rc<RefCell<TimeStampCounterBackend>>,
         core_id: u32,
         package_id: u32,
         system: &mut System,
@@ -195,6 +229,15 @@ impl Cpu {
         let exists = cpu.cores.iter().any(|c| c.core_id == core_id);
 
         if !exists {
+            Self::try_add_intel_core_clock_sensor(
+                system,
+                cpuid,
+                package_id,
+                core_id,
+                affinity,
+                &cpu.vendor,
+                cpu_backend,
+            );
             Self::try_add_intel_temp_sensor(
                 system,
                 cpuid,
@@ -209,6 +252,91 @@ impl Cpu {
         cpu.cores.iter_mut().find(|c| c.core_id == core_id).unwrap()
     }
 
+    fn try_add_intel_bus_clock_sensor(
+        system: &mut System,
+        cpuid: &raw_cpuid::CpuId<impl raw_cpuid::CpuIdReader>,
+        package_id: u32,
+        vendor: &Vendor,
+        backend: &Rc<RefCell<TimeStampCounterBackend>>,
+    ) {
+        let Vendor::Intel {
+            micro_architecture,
+            time_stamp_counter_multiplier,
+            ..
+        } = vendor
+        else {
+            return;
+        };
+
+        if *time_stamp_counter_multiplier <= 0.0 {
+            return;
+        }
+
+        let Some(f_info) = cpuid.get_feature_info() else {
+            return;
+        };
+
+        if *micro_architecture != MicroArchitecture::Unknown && f_info.has_tsc() {
+            let sensor_id = format!("/cpu/{}/clock", package_id);
+
+            system.add_sensor(Sensor {
+                id: sensor_id,
+                impl_: Box::new(IntelBusClockSensor {
+                    backend: backend.clone(),
+                    time_stamp_counter_multiplier: *time_stamp_counter_multiplier,
+                }),
+                parameters: None,
+            });
+        }
+    }
+
+    fn try_add_intel_core_clock_sensor(
+        system: &mut System,
+        cpuid: &raw_cpuid::CpuId<impl raw_cpuid::CpuIdReader>,
+        package_id: u32,
+        core_id: u32,
+        affinity: &GroupAffinity,
+        vendor: &Vendor,
+        backend: &Rc<RefCell<TimeStampCounterBackend>>,
+    ) {
+        let Vendor::Intel {
+            micro_architecture,
+            time_stamp_counter_multiplier,
+            ..
+        } = vendor
+        else {
+            return;
+        };
+
+        if *time_stamp_counter_multiplier <= 0.0 {
+            return;
+        }
+
+        let Some(f_info) = cpuid.get_feature_info() else {
+            return;
+        };
+
+        if *micro_architecture != MicroArchitecture::Unknown && f_info.has_tsc() {
+            let driver = system
+                .get_driver::<IntelMsr>()
+                .unwrap_or_else(|| system.insert_driver(IntelMsr::new()));
+
+            let sensor_id = format!("/cpu/{}/core/{}/clock", package_id, core_id);
+
+            system.add_sensor(Sensor {
+                id: sensor_id,
+                impl_: Box::new(IntelCoreClockSensor {
+                    backend: backend.clone(),
+                    time_stamp_counter_multiplier: *time_stamp_counter_multiplier,
+                    affinity: affinity.clone(),
+                    driver: driver.clone(),
+                    micro_architecture: micro_architecture.clone(),
+                }),
+                parameters: None,
+            });
+        }
+    }
+
     /// Common logic for adding Package and Core temperature sensors
     fn try_add_intel_temp_sensor(
         system: &mut System,
@@ -221,6 +349,7 @@ impl Cpu {
         let Vendor::Intel {
             micro_architecture,
             tj_max,
+            ..
         } = vendor
         else {
             return;
@@ -274,6 +403,7 @@ impl Cpu {
 
     /// Helper to determine vendor information from CPUID
     fn determine_vendor<R: raw_cpuid::CpuIdReader>(
+        system: &mut System,
         cpuid: &raw_cpuid::CpuId<R>,
         family: u8,
         model: u8,
@@ -285,7 +415,11 @@ impl Cpu {
                 "GenuineIntel" => {
                     let (tj_max, micro_architecture) =
                         get_cpu_tjmax_info(family, model, stepping, core_count);
+
+                    let time_stamp_counter_multiplier =
+                        get_time_stamp_counter_multiplier(system, &micro_architecture);
                     Vendor::Intel {
+                        time_stamp_counter_multiplier,
                         micro_architecture,
                         tj_max: tj_max,
                     }

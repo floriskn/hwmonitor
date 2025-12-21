@@ -5,6 +5,7 @@ use super::intel::{micro_architecture::MicroArchitecture, tj_max::CpuTJMax};
 #[derive(Debug, Clone)]
 pub enum Vendor {
     Intel {
+        time_stamp_counter_multiplier: f64,
         tj_max: CpuTJMax,
         micro_architecture: MicroArchitecture,
     },

@@ -51,7 +51,7 @@ impl System {
     pub fn update_backends(&mut self) {
         self.backends.retain(|b| {
             if let Some(backend) = b.0.upgrade() {
-                backend.borrow().update();
+                backend.borrow_mut().update();
                 true
             } else {
                 false

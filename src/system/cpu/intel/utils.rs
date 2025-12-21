@@ -1,3 +1,7 @@
+use x86::msr::{IA32_PERF_STATUS, MSR_PLATFORM_INFO};
+
+use crate::{drivers::pawn_io::intel_msr::IntelMsr, system::system::System};
+
 use super::{micro_architecture::MicroArchitecture, tj_max::CpuTJMax};
 
 pub fn get_cpu_tjmax_info(
@@ -150,4 +154,62 @@ pub fn get_cpu_tjmax_info(
 
         _ => (CpuTJMax::Static(100.0), MicroArchitecture::Unknown),
     }
+}
+
+pub fn get_time_stamp_counter_multiplier(
+    system: &mut System,
+    micro_architecture: &MicroArchitecture,
+) -> f64 {
+    let driver = system
+        .get_driver::<IntelMsr>()
+        .unwrap_or_else(|| system.insert_driver(IntelMsr::new()));
+
+    let mut time_stamp_counter_multiplier: f64 = 0.0;
+
+    match micro_architecture {
+        // Architectures that read IA32_PERF_STATUS
+        MicroArchitecture::Atom | MicroArchitecture::Core | MicroArchitecture::NetBurst => {
+            if let Ok((_eax, edx)) = driver.borrow().read_msr(IA32_PERF_STATUS) {
+                // ((edx >> 8) & 0x1f) + 0.5 * ((edx >> 14) & 1)
+                time_stamp_counter_multiplier =
+                    ((edx >> 8) & 0x1f) as f64 + 0.5 * ((edx >> 14) & 1) as f64;
+            }
+        }
+
+        // Architectures that read MSR_PLATFORM_INFO
+        MicroArchitecture::Airmont
+        | MicroArchitecture::AlderLake
+        | MicroArchitecture::ArrowLake
+        | MicroArchitecture::Broadwell
+        | MicroArchitecture::CannonLake
+        | MicroArchitecture::CometLake
+        | MicroArchitecture::Goldmont
+        | MicroArchitecture::GoldmontPlus
+        | MicroArchitecture::Haswell
+        | MicroArchitecture::IceLake
+        | MicroArchitecture::IvyBridge
+        | MicroArchitecture::JasperLake
+        | MicroArchitecture::KabyLake
+        | MicroArchitecture::LunarLake
+        | MicroArchitecture::Nehalem
+        | MicroArchitecture::MeteorLake
+        | MicroArchitecture::RaptorLake
+        | MicroArchitecture::RocketLake
+        | MicroArchitecture::SandyBridge
+        | MicroArchitecture::Silvermont
+        | MicroArchitecture::Skylake
+        | MicroArchitecture::TigerLake
+        | MicroArchitecture::SapphireRapids
+        | MicroArchitecture::ElkhartLake
+        | MicroArchitecture::Tremont => {
+            if let Ok((eax, _edx)) = driver.borrow().read_msr(MSR_PLATFORM_INFO) {
+                time_stamp_counter_multiplier = ((eax >> 8) & 0xff) as f64;
+            }
+        }
+        MicroArchitecture::Unknown => {
+            time_stamp_counter_multiplier = 0.0;
+        }
+    }
+
+    time_stamp_counter_multiplier
 }
