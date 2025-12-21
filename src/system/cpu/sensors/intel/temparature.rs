@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use x86::msr::IA32_PACKAGE_THERM_STATUS;
 
-use crate::_src::{
+use crate::{
     drivers::pawn_io::intel_msr::{IntelMsr, IntelMsrError},
     system::{
         cpu::affinity::group::GroupAffinity,

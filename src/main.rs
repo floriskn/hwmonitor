@@ -3,14 +3,10 @@
 
 use std::{thread, time::Duration};
 
-use crate::{
-    _src::system::{cpu::cpu::Cpu, sensor::SensorKind, system::System},
-    pawn_io::intel_msr::{self, GroupAffinity, IntelMsr},
-};
+use crate::system::{cpu::cpu::Cpu, sensor::SensorKind, system::System};
 
-mod _src;
-mod pawn_io;
-mod system;
+mod drivers;
+pub mod system;
 
 fn main() -> Result<(), String> {
     let mut s = System::new();

@@ -1,8 +1,0 @@
-pub(crate) mod affinity;
-pub(crate) mod backends;
-pub(crate) mod core;
-pub(crate) mod cpu;
-pub(crate) mod cpuid;
-pub(crate) mod intel;
-pub(crate) mod sensors;
-pub(crate) mod vendor;

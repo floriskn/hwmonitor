@@ -1,4 +1,4 @@
-use crate::_src::system::cpu::affinity::group::GroupAffinity;
+use crate::system::cpu::affinity::group::GroupAffinity;
 
 #[derive(Debug)]
 pub struct Thread {
