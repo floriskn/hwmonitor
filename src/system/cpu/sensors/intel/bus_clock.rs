@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::system::{
-    cpu::backends::time_stamp_counter_backend::TimeStampCounterBackend,
+    cpu::backends::common::time_stamp_counter_backend::TimeStampCounterBackend,
     sensor::{SensorError, SensorImpl, SensorKind, SensorTarget},
 };
 

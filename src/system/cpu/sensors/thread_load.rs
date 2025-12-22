@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 use crate::system::{
     cpu::{
         affinity::group::GroupAffinity,
-        backends::thread_backend::{ThreadBackend, ThreadBackendError},
+        backends::common::thread_backend::{ThreadBackend, ThreadBackendError},
     },
     sensor::{SensorError, SensorImpl, SensorKind, SensorTarget},
 };

@@ -1,8 +1,11 @@
 pub(crate) mod affinity;
 pub(crate) mod backends;
 pub(crate) mod core;
-pub(crate) mod cpu;
+// pub(crate) mod cpu;
 pub(crate) mod cpuid;
+pub(crate) mod discover;
 pub(crate) mod intel;
+pub(crate) mod register;
 pub(crate) mod sensors;
+pub(crate) mod topology;
 pub(crate) mod vendor;

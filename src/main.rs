@@ -3,7 +3,7 @@
 
 use std::{thread, time::Duration};
 
-use crate::system::{cpu::cpu::Cpu, sensor::SensorKind, system::System};
+use crate::system::{sensor::SensorKind, system::System};
 
 mod drivers;
 pub mod system;
@@ -11,12 +11,14 @@ pub mod system;
 fn main() -> Result<(), String> {
     let mut s = System::new();
 
+    println!("START");
+
     let _ = s.discover();
 
-    for _ in 0..5 {
+    for _ in 0..1 {
         s.update_backends();
         for sensor in &s.sensors {
-            if sensor.kind() != SensorKind::Clock {
+            if sensor.kind() != SensorKind::Voltage {
                 continue;
             }
 
