@@ -15,10 +15,14 @@ fn main() -> Result<(), String> {
 
     let _ = s.discover();
 
-    for _ in 0..1 {
+    for i in 0..2 {
         s.update_backends();
         for sensor in &s.sensors {
-            if sensor.kind() != SensorKind::Voltage {
+            // if sensor.kind() != SensorKind::Power {
+            //     continue;
+            // }
+
+            if i == 0 {
                 continue;
             }
 

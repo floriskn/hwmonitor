@@ -1,7 +1,10 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use raw_cpuid::CpuIdReaderNative;
-use x86::msr::IA32_PERF_STATUS;
+use x86::msr::{
+    IA32_PERF_STATUS, MSR_DRAM_ENERGY_STATUS, MSR_PKG_ENERGY_STATUS, MSR_PP0_ENERGY_STATUS,
+    MSR_PP1_ENERGY_STATUS, MSR_RAPL_POWER_UNIT,
+};
 
 use crate::{
     drivers::pawn_io::intel_msr::IntelMsr,
@@ -18,8 +21,8 @@ use crate::{
             intel::{micro_architecture::MicroArchitecture, tj_max::CpuTJMax},
             sensors::{
                 intel::{
-                    bus_clock::IntelBusClockSensor, temparature::IntelCpuTempSensor,
-                    voltage::IntelCpuVoltageSensor,
+                    bus_clock::IntelBusClockSensor, power::IntelCpuPowerSensor,
+                    temparature::IntelCpuTempSensor, voltage::IntelCpuVoltageSensor,
                 },
                 thread_load::ThreadLoadSensor,
             },
@@ -102,6 +105,97 @@ impl CpuVendor for IntelVendor {
                     parameters: None,
                 });
             }
+        }
+
+        match self.micro_arch {
+            MicroArchitecture::Airmont
+            | MicroArchitecture::AlderLake
+            | MicroArchitecture::ArrowLake
+            | MicroArchitecture::Broadwell
+            | MicroArchitecture::CannonLake
+            | MicroArchitecture::CometLake
+            | MicroArchitecture::Goldmont
+            | MicroArchitecture::GoldmontPlus
+            | MicroArchitecture::Haswell
+            | MicroArchitecture::IceLake
+            | MicroArchitecture::IvyBridge
+            | MicroArchitecture::JasperLake
+            | MicroArchitecture::KabyLake
+            | MicroArchitecture::LunarLake
+            | MicroArchitecture::MeteorLake
+            | MicroArchitecture::RaptorLake
+            | MicroArchitecture::RocketLake
+            | MicroArchitecture::SandyBridge
+            | MicroArchitecture::Silvermont
+            | MicroArchitecture::Skylake
+            | MicroArchitecture::TigerLake
+            | MicroArchitecture::SapphireRapids
+            | MicroArchitecture::ElkhartLake
+            | MicroArchitecture::Tremont => {
+                let driver: Rc<RefCell<IntelMsr>> = system
+                    .get_driver::<IntelMsr>()
+                    .unwrap_or_else(|| system.insert_driver(IntelMsr::new()));
+                let msr_result = driver.borrow().read_msr(MSR_RAPL_POWER_UNIT);
+
+                // Drop the borrow immediately
+                if let Ok((eax, _)) = msr_result {
+                    // Check if digital voltage is non-zero
+
+                    let energy_units_multiplier = match self.micro_arch {
+                        MicroArchitecture::Airmont | MicroArchitecture::Silvermont => {
+                            1.0e-6f32 * (1 << (((eax >> 8) & 0x1F) as i32)) as f32
+                        }
+                        _ => 1.0 / (1 << (((eax >> 8) & 0x1F) as i32)) as f32,
+                    };
+
+                    let package_id = cpu.package_id.unwrap_or(0);
+
+                    if energy_units_multiplier != 0.0 {
+                        try_add_power_sensor(
+                            MSR_PKG_ENERGY_STATUS,
+                            system,
+                            &driver,
+                            package_id,
+                            energy_units_multiplier,
+                            "package_energy",
+                        );
+                        try_add_power_sensor(
+                            MSR_PP0_ENERGY_STATUS,
+                            system,
+                            &driver,
+                            package_id,
+                            energy_units_multiplier,
+                            "cores_energy",
+                        );
+                        // try_add_power_sensor(
+                        //     MSR_PP1_ENERGY_STATUS,
+                        //     system,
+                        //     &driver,
+                        //     package_id,
+                        //     energy_units_multiplier,
+                        //     "graphics_energy",
+                        // );
+                        try_add_power_sensor(
+                            MSR_DRAM_ENERGY_STATUS,
+                            system,
+                            &driver,
+                            package_id,
+                            energy_units_multiplier,
+                            "memory_energy",
+                        );
+                        const MSR_PLATFORM_ENERGY_STATUS: u32 = 0x64D;
+                        try_add_power_sensor(
+                            MSR_PLATFORM_ENERGY_STATUS, // 0x64D
+                            system,
+                            &driver,
+                            package_id,
+                            energy_units_multiplier,
+                            "platform_energy",
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -207,4 +301,34 @@ fn get_tj_max_from_msr(driver: &Rc<RefCell<IntelMsr>>, group_affinity: &GroupAff
         Ok((eax, _)) => ((eax >> 16) & 0xFF) as f32,
         Err(_) => 100.0,
     }
+}
+
+fn try_add_power_sensor(
+    index: u32,
+    system: &mut System,
+    driver: &Rc<RefCell<IntelMsr>>,
+    package_id: u32,
+    energy_units_multiplier: f32,
+    id_suffix: &str,
+) {
+    // Attempt to read the MSR register
+    let eax = match driver.borrow().read_msr(index) {
+        Ok((eax, _)) if eax != 0 => eax,
+        Ok(_) => return, // MSR returned 0, no sensor to add
+        Err(_) => return,
+    };
+
+    // Add the sensor to the system
+    system.add_sensor(Sensor {
+        id: format!("/cpu/{}/{}", package_id, id_suffix),
+        parameters: None,
+        impl_: Box::new(IntelCpuPowerSensor {
+            driver: Rc::clone(driver),
+            energy_units_multiplier,
+            index,
+            last_energy_consumed: RefCell::new(eax),
+            last_energy_time: RefCell::new(Instant::now()),
+            value: RefCell::new(None),
+        }),
+    });
 }
