@@ -10,7 +10,7 @@ use crate::{
     system::{
         cpu::{
             affinity::group::GroupAffinity,
-            backends::time_stamp_counter_backend::TimeStampCounterBackend,
+            backends::common::time_stamp_counter_backend::TimeStampCounterBackend,
             intel::micro_architecture::MicroArchitecture,
         },
         sensor::{SensorError, SensorImpl, SensorKind, SensorTarget},
@@ -28,6 +28,18 @@ pub struct IntelCoreClockSensor {
 
 impl SensorImpl for IntelCoreClockSensor {
     fn read(&self, _: &Option<Vec<f32>>) -> Result<Option<f32>, SensorError> {
+        // --- Hardware Note on Shared Voltage Rails ---
+        // On most consumer Intel CPUs (like the i9-10850K or Alder/Raptor Lake),
+        // all cores share a single VccIA voltage rail.
+        //
+        // While we read the VID (Voltage ID) per core with specific affinity,
+        // the values will appear nearly identical because the Voltage Regulator
+        // follows the "Highest Wins" policy (it supplies the maximum voltage
+        // requested by any active core to the entire rail).
+        //
+        // Slight differences between readings are expected because sensors are
+        // sampled sequentially; a core's frequency or load may shift in the
+        // microseconds between individual MSR read calls.
         let tsc_freq = self.backend.borrow().time_stamp_counter_frequency;
 
         // 1. Try to read the MSR

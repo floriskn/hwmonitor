@@ -9,7 +9,6 @@ use crate::{
     drivers::driver::Driver,
     system::{
         backend::{Backend, BackendRef},
-        cpu::cpu::Cpu,
         sensor::Sensor,
     },
 };
@@ -34,7 +33,9 @@ impl System {
 
     pub fn discover(&mut self) -> Result<(), String> {
         // TODO: store in system
-        let _ = Cpu::discover(self);
+        // let _ = Cpu::discover(self);
+
+        super::cpu::register::register_all(self);
 
         Ok(())
     }
