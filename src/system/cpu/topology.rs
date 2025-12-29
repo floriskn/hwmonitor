@@ -13,6 +13,7 @@ pub struct CpuNode<R: CpuIdReader> {
 
 pub struct CoreNode {
     pub core_id: u32,
+    pub affinity: GroupAffinity,
     pub threads: Vec<ThreadNode>,
 }
 

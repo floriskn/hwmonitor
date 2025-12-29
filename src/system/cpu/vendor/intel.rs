@@ -21,8 +21,9 @@ use crate::{
             intel::{micro_architecture::MicroArchitecture, tj_max::CpuTJMax},
             sensors::{
                 intel::{
-                    bus_clock::IntelBusClockSensor, power::IntelCpuPowerSensor,
-                    temparature::IntelCpuTempSensor, voltage::IntelCpuVoltageSensor,
+                    bus_clock::IntelBusClockSensor, core_clock::IntelCoreClockSensor,
+                    power::IntelCpuPowerSensor, temparature::IntelCpuTempSensor,
+                    voltage::IntelCpuVoltageSensor,
                 },
                 thread_load::ThreadLoadSensor,
             },
@@ -48,18 +49,24 @@ impl CpuVendor for IntelVendor {
         cpu: &CpuNode<CpuIdReaderNative>,
         backends: &mut BackendContext,
     ) {
-        if self.tsc_multiplier > 0.0 {
-            let tsc_backend = backends.get_or_insert(cpu.package_id, || {
-                TimeStampCounterBackend::new(cpu.affinity.clone())
-            });
-            system.add_sensor(Sensor {
-                id: format!("/cpu/{}/clock", cpu.package_id.unwrap_or(0)),
-                impl_: Box::new(IntelBusClockSensor {
-                    backend: tsc_backend,
-                    time_stamp_counter_multiplier: self.tsc_multiplier,
-                }),
-                parameters: None,
-            });
+        if let Some(f_info) = cpu.cpuid.get_feature_info() {
+            if self.tsc_multiplier > 0.0
+                && f_info.has_tsc()
+                && self.micro_arch != MicroArchitecture::Unknown
+            {
+                let tsc_backend = backends.get_or_insert(cpu.package_id, || {
+                    TimeStampCounterBackend::new(cpu.affinity.clone())
+                });
+
+                system.add_sensor(Sensor {
+                    id: format!("/cpu/{}/clock", cpu.package_id.unwrap_or(0)),
+                    impl_: Box::new(IntelBusClockSensor {
+                        backend: tsc_backend,
+                        time_stamp_counter_multiplier: self.tsc_multiplier,
+                    }),
+                    parameters: None,
+                });
+            }
         }
 
         if let Some(tp_info) = cpu.cpuid.get_thermal_power_info() {
@@ -204,7 +211,7 @@ impl CpuVendor for IntelVendor {
         system: &mut System,
         cpu: &CpuNode<CpuIdReaderNative>,
         core: &CoreNode,
-        _backends: &mut BackendContext,
+        backends: &mut BackendContext,
     ) {
         if let Some(tp_info) = cpu.cpuid.get_thermal_power_info() {
             if self.micro_arch != MicroArchitecture::Unknown && tp_info.has_dts() {
@@ -226,7 +233,7 @@ impl CpuVendor for IntelVendor {
                     ),
                     impl_: Box::new(IntelCpuTempSensor {
                         driver,
-                        affinity: cpu.affinity.clone(),
+                        affinity: core.affinity.clone(),
                     }),
                     parameters: Some(vec![tj_max, 1.0]),
                 });
@@ -252,7 +259,40 @@ impl CpuVendor for IntelVendor {
                     ),
                     impl_: Box::new(IntelCpuVoltageSensor {
                         driver: driver, // clone Rc so we can still use driver later
-                        affinity: Some(cpu.affinity.clone()),
+                        affinity: Some(core.affinity.clone()),
+                    }),
+                    parameters: None,
+                });
+            }
+        }
+
+        if let Some(f_info) = cpu.cpuid.get_feature_info() {
+            if self.tsc_multiplier > 0.0
+                && f_info.has_tsc()
+                && self.micro_arch != MicroArchitecture::Unknown
+            {
+                let driver = system
+                    .get_driver::<IntelMsr>()
+                    .unwrap_or_else(|| system.insert_driver(IntelMsr::new()));
+
+                let tsc_backend = backends.get_or_insert(cpu.package_id, || {
+                    TimeStampCounterBackend::new(cpu.affinity.clone())
+                });
+
+                let sensor_id = format!(
+                    "/cpu/{}/core/{}/clock",
+                    cpu.package_id.unwrap_or(0),
+                    core.core_id
+                );
+
+                system.add_sensor(Sensor {
+                    id: sensor_id,
+                    impl_: Box::new(IntelCoreClockSensor {
+                        backend: tsc_backend,
+                        time_stamp_counter_multiplier: self.tsc_multiplier,
+                        affinity: core.affinity.clone(),
+                        driver: driver.clone(),
+                        micro_architecture: self.micro_arch.clone(),
                     }),
                     parameters: None,
                 });

@@ -70,7 +70,38 @@ pub fn vendor_for(
                 tj_max,
             })
         }
-        Vendor::Amd => Box::new(AmdVendor {}),
+        Vendor::Amd => {
+            let feature_info = cpu_node.cpuid.get_feature_info();
+            let family_id = feature_info.as_ref().map_or(0, |f| f.family_id());
+
+            match family_id {
+                0x0F => {
+                    println!("Amd0FCpu");
+
+                    let mut offset: f32 = -49.0;
+
+                    // AM2+ 65nm +21 offset
+                    let model_id = feature_info.as_ref().map_or(0, |f| f.model_id());
+                    if model_id >= 0x69 && model_id != 0xc1 && model_id != 0x6c && model_id != 0x7c
+                    {
+                        offset += 21.0;
+                    }
+
+                    Box::new(AmdVendor::F0F { offset })
+                }
+                0x10 | 0x11 | 0x12 | 0x14 | 0x15 | 0x16 => {
+                    println!("Amd10Cpu");
+
+                    Box::new(AmdVendor::F10)
+                }
+                0x17 | 0x19 | 0x1A => {
+                    println!("Amd17Cpu");
+
+                    Box::new(AmdVendor::F17)
+                }
+                _ => Box::new(UnknownVendor {}),
+            }
+        }
         Vendor::Unknown(_) => Box::new(UnknownVendor {}),
     }
 }

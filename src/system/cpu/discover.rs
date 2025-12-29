@@ -59,7 +59,7 @@ pub fn discover_topology() -> (Vec<CpuNode<CpuIdReaderNative>>, usize) {
                 );
 
                 let cpu = &mut cpus[cpu_idx];
-                let core = get_or_create_core(cpu, core_id);
+                let core = get_or_create_core(cpu, core_id, affinity.clone());
 
                 core.threads.push(ThreadNode { smt_id, affinity });
             }
@@ -115,7 +115,11 @@ fn get_or_create_cpu(
 ///
 /// Invariant:
 /// - Core IDs are unique per CPU package
-fn get_or_create_core(cpu: &mut CpuNode<CpuIdReaderNative>, core_id: u32) -> &mut CoreNode {
+fn get_or_create_core(
+    cpu: &mut CpuNode<CpuIdReaderNative>,
+    core_id: u32,
+    affinity: GroupAffinity,
+) -> &mut CoreNode {
     // Phase 1: find index (immutable borrow)
     if let Some(idx) = cpu.cores.iter().position(|c| c.core_id == core_id) {
         return &mut cpu.cores[idx];
@@ -125,6 +129,7 @@ fn get_or_create_core(cpu: &mut CpuNode<CpuIdReaderNative>, core_id: u32) -> &mu
     cpu.cores.push(CoreNode {
         core_id,
         threads: Vec::new(),
+        affinity: affinity,
     });
 
     cpu.cores.last_mut().unwrap()
